@@ -4,154 +4,22 @@ Advanced Auto-Clicker & Macro Utility
 Dependencies:
     pip install pynput keyboard
 
-Notes:
-    - On many Linux distributions, the `keyboard` library requires root
-      privileges for global hotkeys. When unavailable, the app now shows
-      a clear warning instead of raising an exception.
-
 This script provides a Tkinter-based GUI with multiple tools:
     - Simple Auto-Clicker
     - Macro Recorder
     - Keyboard Auto-Presser
 
-Global hotkeys rely on the `keyboard` library when available and will
-warn if the environment blocks registration.
+Global hotkeys rely on the `keyboard` library and work even when the
+application window is not focused.
 """
 
 import threading
 import time
 import tkinter as tk
-from dataclasses import dataclass
-from typing import Optional, Set
 from tkinter import ttk, messagebox
 
-try:
-    import keyboard
-    KEYBOARD_AVAILABLE = True
-    KEYBOARD_ERROR = None
-except Exception as exc:  # keyboard can fail to import without permissions
-    keyboard = None
-    KEYBOARD_AVAILABLE = False
-    KEYBOARD_ERROR = exc
+import keyboard
 from pynput import mouse, keyboard as pynput_keyboard
-
-
-def safe_add_hotkey(hotkey: str, callback):
-    """Attempt to register a hotkey via the keyboard library."""
-    if not KEYBOARD_AVAILABLE or keyboard is None:
-        raise RuntimeError(
-            "Global hotkeys unavailable: keyboard library failed to load. "
-            "Linux users may need to run as root or grant input device access."
-        ) from KEYBOARD_ERROR
-    try:
-        return keyboard.add_hotkey(hotkey, callback)
-    except Exception as exc:  # catch permission errors from keyboard on Linux
-        raise RuntimeError(
-            f"Could not register hotkey '{hotkey}'. On Linux, root access is often required."
-        ) from exc
-
-
-def safe_remove_hotkey(handle):
-    if KEYBOARD_AVAILABLE and keyboard is not None and handle is not None:
-        try:
-            keyboard.remove_hotkey(handle)
-        except Exception:
-            pass
-
-
-def _normalize_hotkey_part(part: str) -> Optional[str]:
-    """Normalize a single hotkey token into a comparable string."""
-    if not part:
-        return None
-    normalized = part.lower().strip()
-    aliases = {
-        "ctrl": "ctrl",
-        "control": "ctrl",
-        "shift": "shift",
-        "alt": "alt",
-        "option": "alt",
-        "cmd": "cmd",
-        "command": "cmd",
-        "win": "cmd",
-    }
-    return aliases.get(normalized, normalized)
-
-
-def _key_to_string(key) -> str:
-    if isinstance(key, pynput_keyboard.Key):
-        return _normalize_hotkey_part(str(key).replace("Key.", "")) or str(key)
-    if isinstance(key, pynput_keyboard.KeyCode):
-        return _normalize_hotkey_part(key.char) if key.char else str(key)
-    return _normalize_hotkey_part(str(key)) or str(key)
-
-
-def _parse_hotkey(hotkey: str) -> Set[str]:
-    parts = [_normalize_hotkey_part(part) for part in hotkey.split("+")]
-    return {p for p in parts if p}
-
-
-class FallbackHotkey:
-    """Fallback listener using pynput when keyboard hotkeys are unavailable."""
-
-    def __init__(self, hotkey: str, callback):
-        self.hotkey = hotkey
-        self.callback = callback
-        self.combo = _parse_hotkey(hotkey)
-        if not self.combo:
-            raise RuntimeError("Invalid hotkey")
-        self.pressed: Set[str] = set()
-        self.triggered = False
-        self.listener = pynput_keyboard.Listener(
-            on_press=self._on_press, on_release=self._on_release
-        )
-        self.listener.start()
-
-    def _on_press(self, key):
-        self.pressed.add(_key_to_string(key))
-        if self.combo.issubset(self.pressed) and not self.triggered:
-            self.triggered = True
-            try:
-                self.callback()
-            except Exception:
-                pass
-
-    def _on_release(self, key):
-        self.pressed.discard(_key_to_string(key))
-        if not self.combo.issubset(self.pressed):
-            self.triggered = False
-
-    def stop(self):
-        if self.listener:
-            self.listener.stop()
-
-
-@dataclass
-class HotkeyHandle:
-    kind: str
-    handle: object
-    warning: Optional[str] = None
-
-
-def register_hotkey_with_fallback(hotkey: str, callback) -> HotkeyHandle:
-    """Register a hotkey, falling back to pynput listener if needed."""
-    try:
-        handle = safe_add_hotkey(hotkey, callback)
-        return HotkeyHandle(kind="keyboard", handle=handle, warning=None)
-    except RuntimeError as exc:
-        try:
-            fallback = FallbackHotkey(hotkey, callback)
-            return HotkeyHandle(kind="fallback", handle=fallback, warning=str(exc))
-        except Exception as fallback_exc:
-            raise RuntimeError(f"{exc} Fallback listener failed: {fallback_exc}") from fallback_exc
-
-
-def unregister_hotkey(handle: Optional[HotkeyHandle]) -> None:
-    if not handle:
-        return
-    if handle.kind == "keyboard":
-        safe_remove_hotkey(handle.handle)
-    elif handle.kind == "fallback" and isinstance(handle.handle, FallbackHotkey):
-        handle.handle.stop()
 
 
 class StatusLabel(ttk.Label):
@@ -164,7 +32,7 @@ class AutoClicker:
         self.parent = parent
         self.running = False
         self.stop_event = threading.Event()
-        self.hotkey_handle: Optional[HotkeyHandle] = None
+        self.hotkey_handle = None
 
         self.mouse_controller = mouse.Controller()
 
@@ -212,26 +80,13 @@ class AutoClicker:
 
     def bind_hotkey(self) -> None:
         if self.hotkey_handle:
-            unregister_hotkey(self.hotkey_handle)
+            keyboard.remove_hotkey(self.hotkey_handle)
         hotkey = self.hotkey_var.get().strip()
         if not hotkey:
             messagebox.showwarning("Hotkey", "Please enter a hotkey combination.")
             return
-        try:
-            self.hotkey_handle = register_hotkey_with_fallback(hotkey, self.toggle)
-        except RuntimeError as exc:
-            self.hotkey_handle = None
-            messagebox.showerror("Hotkey", str(exc))
-            self.status_label.set_status("Hotkey unavailable")
-            return
-        suffix = " (fallback)" if self.hotkey_handle.warning else ""
-        if self.hotkey_handle.warning:
-            messagebox.showwarning(
-                "Hotkey (fallback)",
-                f"Keyboard hotkey backend unavailable: {self.hotkey_handle.warning}\n"
-                "Using a fallback listener that should work without root privileges.",
-            )
-        self.status_label.set_status(f"Hotkey bound to {hotkey}{suffix}")
+        self.hotkey_handle = keyboard.add_hotkey(hotkey, self.toggle)
+        self.status_label.set_status(f"Hotkey bound to {hotkey}")
 
     def _button_choice(self) -> mouse.Button:
         choice = self.button_var.get()
@@ -281,7 +136,7 @@ class AutoClicker:
     def shutdown(self) -> None:
         self.stop_clicking()
         if self.hotkey_handle:
-            unregister_hotkey(self.hotkey_handle)
+            keyboard.remove_hotkey(self.hotkey_handle)
 
 
 class MacroRecorder:
@@ -295,7 +150,7 @@ class MacroRecorder:
         self.mouse_listener = None
         self.key_listener = None
         self.playback_stop = threading.Event()
-        self.hotkey_handle: Optional[HotkeyHandle] = None
+        self.hotkey_handle = None
 
         self.mouse_controller = mouse.Controller()
         self.keyboard_controller = pynput_keyboard.Controller()
@@ -337,26 +192,13 @@ class MacroRecorder:
 
     def bind_hotkey(self) -> None:
         if self.hotkey_handle:
-            unregister_hotkey(self.hotkey_handle)
+            keyboard.remove_hotkey(self.hotkey_handle)
         hotkey = self.hotkey_var.get().strip()
         if not hotkey:
             messagebox.showwarning("Hotkey", "Please enter a hotkey combination.")
             return
-        try:
-            self.hotkey_handle = register_hotkey_with_fallback(hotkey, self.toggle_playback)
-        except RuntimeError as exc:
-            self.hotkey_handle = None
-            messagebox.showerror("Hotkey", str(exc))
-            self.status_label.set_status("Hotkey unavailable")
-            return
-        suffix = " (fallback)" if self.hotkey_handle.warning else ""
-        if self.hotkey_handle.warning:
-            messagebox.showwarning(
-                "Hotkey (fallback)",
-                f"Keyboard hotkey backend unavailable: {self.hotkey_handle.warning}\n"
-                "Using a fallback listener that should work without root privileges.",
-            )
-        self.status_label.set_status(f"Hotkey bound to {hotkey}{suffix}")
+        self.hotkey_handle = keyboard.add_hotkey(hotkey, self.toggle_playback)
+        self.status_label.set_status(f"Hotkey bound to {hotkey}")
 
     def start_recording(self) -> None:
         if self.recording:
@@ -471,7 +313,7 @@ class MacroRecorder:
         self.stop_recording()
         self.stop_playback()
         if self.hotkey_handle:
-            unregister_hotkey(self.hotkey_handle)
+            keyboard.remove_hotkey(self.hotkey_handle)
 
 
 class KeyAutoPresser:
@@ -479,7 +321,7 @@ class KeyAutoPresser:
         self.parent = parent
         self.running = False
         self.stop_event = threading.Event()
-        self.hotkey_handle: Optional[HotkeyHandle] = None
+        self.hotkey_handle = None
 
         self.keyboard_controller = pynput_keyboard.Controller()
 
@@ -521,26 +363,13 @@ class KeyAutoPresser:
 
     def bind_hotkey(self) -> None:
         if self.hotkey_handle:
-            unregister_hotkey(self.hotkey_handle)
+            keyboard.remove_hotkey(self.hotkey_handle)
         hotkey = self.hotkey_var.get().strip()
         if not hotkey:
             messagebox.showwarning("Hotkey", "Please enter a hotkey combination.")
             return
-        try:
-            self.hotkey_handle = register_hotkey_with_fallback(hotkey, self.toggle)
-        except RuntimeError as exc:
-            self.hotkey_handle = None
-            messagebox.showerror("Hotkey", str(exc))
-            self.status_label.set_status("Hotkey unavailable")
-            return
-        suffix = " (fallback)" if self.hotkey_handle.warning else ""
-        if self.hotkey_handle.warning:
-            messagebox.showwarning(
-                "Hotkey (fallback)",
-                f"Keyboard hotkey backend unavailable: {self.hotkey_handle.warning}\n"
-                "Using a fallback listener that should work without root privileges.",
-            )
-        self.status_label.set_status(f"Hotkey bound to {hotkey}{suffix}")
+        self.hotkey_handle = keyboard.add_hotkey(hotkey, self.toggle)
+        self.status_label.set_status(f"Hotkey bound to {hotkey}")
 
     def _delay_seconds(self) -> float:
         try:
@@ -585,7 +414,7 @@ class KeyAutoPresser:
     def shutdown(self) -> None:
         self.stop_pressing()
         if self.hotkey_handle:
-            unregister_hotkey(self.hotkey_handle)
+            keyboard.remove_hotkey(self.hotkey_handle)
 
 
 class AutoClickerApp:

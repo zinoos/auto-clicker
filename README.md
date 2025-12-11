@@ -11,12 +11,6 @@ A Python desktop utility that bundles three automation helpers into one Tkinter 
 - Python 3.9+
 - `pynput` and `keyboard` libraries for global input hooks and simulation
 
-> **Linux hotkeys:** The `keyboard` library requires root access (or explicit
-> device permissions) to register global hotkeys on many distributions. If
-> registration fails, the app will show an error, fall back to a pynput-based
-> listener when possible, and still allow manual start/stop via the on-screen
-> buttons.
-
 Install dependencies:
 
 ```bash
