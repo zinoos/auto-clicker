@@ -4,18 +4,13 @@ Advanced Auto-Clicker & Macro Utility
 Dependencies:
     pip install pynput keyboard
 
-Notes:
-    - On many Linux distributions, the `keyboard` library requires root
-      privileges for global hotkeys. When unavailable, the app now shows
-      a clear warning instead of raising an exception.
-
 This script provides a Tkinter-based GUI with multiple tools:
     - Simple Auto-Clicker
     - Macro Recorder
     - Keyboard Auto-Presser
 
-Global hotkeys rely on the `keyboard` library when available and will
-warn if the environment blocks registration.
+Global hotkeys rely on the `keyboard` library and work even when the
+application window is not focused.
 """
 
 import threading
@@ -23,38 +18,8 @@ import time
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-try:
-    import keyboard
-    KEYBOARD_AVAILABLE = True
-    KEYBOARD_ERROR = None
-except Exception as exc:  # keyboard can fail to import without permissions
-    keyboard = None
-    KEYBOARD_AVAILABLE = False
-    KEYBOARD_ERROR = exc
+import keyboard
 from pynput import mouse, keyboard as pynput_keyboard
-
-
-def safe_add_hotkey(hotkey: str, callback):
-    """Attempt to register a hotkey, raising RuntimeError on failure."""
-    if not KEYBOARD_AVAILABLE or keyboard is None:
-        raise RuntimeError(
-            "Global hotkeys unavailable: keyboard library failed to load. "
-            "Linux users may need to run as root or grant input device access."
-        ) from KEYBOARD_ERROR
-    try:
-        return keyboard.add_hotkey(hotkey, callback)
-    except Exception as exc:  # catch permission errors from keyboard on Linux
-        raise RuntimeError(
-            f"Could not register hotkey '{hotkey}'. On Linux, root access is often required."
-        ) from exc
-
-
-def safe_remove_hotkey(handle):
-    if KEYBOARD_AVAILABLE and keyboard is not None and handle is not None:
-        try:
-            keyboard.remove_hotkey(handle)
-        except Exception:
-            pass
 
 
 class StatusLabel(ttk.Label):
@@ -115,18 +80,12 @@ class AutoClicker:
 
     def bind_hotkey(self) -> None:
         if self.hotkey_handle:
-            safe_remove_hotkey(self.hotkey_handle)
+            keyboard.remove_hotkey(self.hotkey_handle)
         hotkey = self.hotkey_var.get().strip()
         if not hotkey:
             messagebox.showwarning("Hotkey", "Please enter a hotkey combination.")
             return
-        try:
-            self.hotkey_handle = safe_add_hotkey(hotkey, self.toggle)
-        except RuntimeError as exc:
-            self.hotkey_handle = None
-            messagebox.showerror("Hotkey", str(exc))
-            self.status_label.set_status("Hotkey unavailable")
-            return
+        self.hotkey_handle = keyboard.add_hotkey(hotkey, self.toggle)
         self.status_label.set_status(f"Hotkey bound to {hotkey}")
 
     def _button_choice(self) -> mouse.Button:
@@ -177,7 +136,7 @@ class AutoClicker:
     def shutdown(self) -> None:
         self.stop_clicking()
         if self.hotkey_handle:
-            safe_remove_hotkey(self.hotkey_handle)
+            keyboard.remove_hotkey(self.hotkey_handle)
 
 
 class MacroRecorder:
@@ -233,18 +192,12 @@ class MacroRecorder:
 
     def bind_hotkey(self) -> None:
         if self.hotkey_handle:
-            safe_remove_hotkey(self.hotkey_handle)
+            keyboard.remove_hotkey(self.hotkey_handle)
         hotkey = self.hotkey_var.get().strip()
         if not hotkey:
             messagebox.showwarning("Hotkey", "Please enter a hotkey combination.")
             return
-        try:
-            self.hotkey_handle = safe_add_hotkey(hotkey, self.toggle_playback)
-        except RuntimeError as exc:
-            self.hotkey_handle = None
-            messagebox.showerror("Hotkey", str(exc))
-            self.status_label.set_status("Hotkey unavailable")
-            return
+        self.hotkey_handle = keyboard.add_hotkey(hotkey, self.toggle_playback)
         self.status_label.set_status(f"Hotkey bound to {hotkey}")
 
     def start_recording(self) -> None:
@@ -360,7 +313,7 @@ class MacroRecorder:
         self.stop_recording()
         self.stop_playback()
         if self.hotkey_handle:
-            safe_remove_hotkey(self.hotkey_handle)
+            keyboard.remove_hotkey(self.hotkey_handle)
 
 
 class KeyAutoPresser:
@@ -410,18 +363,12 @@ class KeyAutoPresser:
 
     def bind_hotkey(self) -> None:
         if self.hotkey_handle:
-            safe_remove_hotkey(self.hotkey_handle)
+            keyboard.remove_hotkey(self.hotkey_handle)
         hotkey = self.hotkey_var.get().strip()
         if not hotkey:
             messagebox.showwarning("Hotkey", "Please enter a hotkey combination.")
             return
-        try:
-            self.hotkey_handle = safe_add_hotkey(hotkey, self.toggle)
-        except RuntimeError as exc:
-            self.hotkey_handle = None
-            messagebox.showerror("Hotkey", str(exc))
-            self.status_label.set_status("Hotkey unavailable")
-            return
+        self.hotkey_handle = keyboard.add_hotkey(hotkey, self.toggle)
         self.status_label.set_status(f"Hotkey bound to {hotkey}")
 
     def _delay_seconds(self) -> float:
@@ -467,7 +414,7 @@ class KeyAutoPresser:
     def shutdown(self) -> None:
         self.stop_pressing()
         if self.hotkey_handle:
-            safe_remove_hotkey(self.hotkey_handle)
+            keyboard.remove_hotkey(self.hotkey_handle)
 
 
 class AutoClickerApp:
